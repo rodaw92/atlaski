@@ -222,7 +222,7 @@ def create_critical_scenarios():
                 "object_class": EntityClass.LOCATION,
                 "x": 112.3, "y": 95.5, "z": 1.5,
                 "time": base_time + timedelta(seconds=15),
-                "confidence": 0.75,
+                "confidence": 0.60,  # Lower confidence - LLMs struggle with spatial/numerical reasoning
                 "source": "Transfer log indicates blade moved to assembly bay 15 for installation.",
                 "attributes": {"part_number": "TB-789", "material": "titanium"},
                 "expected": "REJECT",
@@ -445,6 +445,9 @@ def show_interactive_pipeline():
     st.info("""
     **💡 Key Insight:** M3 (MAV) is irreplaceable - it's the ONLY module that catches physics violations!
     Even if M1, M2, M4, M5 all pass a fact, M3 can still reject it for violating spatiotemporal constraints.
+
+    **⚙️ Technical Note:** The system ensures M3 always executes before early termination. This is critical
+    for safety - we cannot skip physics validation even if semantic checks pass with high confidence.
     """)
 
 

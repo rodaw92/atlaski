@@ -26,16 +26,20 @@ class RMMVeEngine:
 
     def __init__(self, modules: List[VerificationModule],
                  global_threshold: float = 0.75,
-                 review_margin: float = 0.10):
+                 review_margin: float = 0.10,
+                 force_m3_execution: bool = True):
         """
         Args:
             modules: List of verification modules (M1-M5)
             global_threshold: Θ for accept/reject decision
             review_margin: ε for review margin
+            force_m3_execution: If True, M3 (MAV) always runs before early termination
+                               (critical for safety - M3 catches 100% of physics violations)
         """
         self.modules = modules
         self.global_threshold = global_threshold
         self.review_margin = review_margin
+        self.force_m3_execution = force_m3_execution
 
     def verify(self, fact: Fact, context: Dict = None) -> Tuple[Decision, Dict]:
         """
@@ -60,10 +64,15 @@ class RMMVeEngine:
         termination_module = None
 
         # Sequential module execution
+        m3_executed = False
         for module in self.modules:
             # Compute module score
             result = module.compute_score(fact, context)
             module_results.append(result)
+
+            # Track if M3 has executed
+            if module.module_id == "M3":
+                m3_executed = True
 
             # Check activation
             if result.activated:
@@ -76,8 +85,12 @@ class RMMVeEngine:
                                   if r.activated)
                 cumulative_confidence = weighted_sum / total_weight
 
-                # Early termination check
-                if cumulative_confidence >= self.global_threshold:
+                # Early termination check (but ensure M3 runs first if force_m3_execution=True)
+                can_terminate = cumulative_confidence >= self.global_threshold
+                if self.force_m3_execution:
+                    can_terminate = can_terminate and m3_executed
+
+                if can_terminate:
                     early_terminated = True
                     termination_module = module.module_id
                     decision = Decision.ACCEPT
