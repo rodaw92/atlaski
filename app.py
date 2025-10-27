@@ -21,6 +21,18 @@ from src.modules.verification import (
 )
 from src.modules.rmmve import RMMVeEngine, Decision
 
+# Import AddQual domain components
+try:
+    from config.addqual_ontology import (
+        AddQualEntityClass, AddQualRelationType,
+        AddQualOntology, ADDQUAL_FACILITY_LAYOUT, TRANSPORT_MODES
+    )
+    from data.addqual_sample_data import get_sample_facts, get_historical_facts_for_embeddings
+    from src.modules.verification_real import RealPOV, RealESV, RealWSV
+    ADDQUAL_AVAILABLE = True
+except ImportError:
+    ADDQUAL_AVAILABLE = False
+
 
 # Page configuration
 st.set_page_config(
@@ -185,6 +197,189 @@ def initialize_demo_system():
     stkg = STKG(ontology=ontology, physics=physics)
 
     return engine, stkg, ontology, modules
+
+
+def initialize_addqual_system():
+    """Initialize the ATLASky-AI system with AddQual aerospace domain"""
+    if not ADDQUAL_AVAILABLE:
+        st.error("AddQual domain not available. Please check installation.")
+        return initialize_demo_system()
+
+    # Get AddQual ontology
+    addqual_ontology = AddQualOntology()
+
+    # Create DomainOntology compatible with our system
+    # Map AddQualEntityClass to our EntityClass enum for compatibility
+    ontology = DomainOntology(
+        classes={
+            EntityClass.EQUIPMENT,  # Maps to ENGINE, MEASUREMENT_DEVICE, etc.
+            EntityClass.COMPONENT,  # Maps to TURBINE_BLADE, LANDING_GEAR, etc.
+            EntityClass.LOCATION,   # Maps to MAINTENANCE_BAY, INSPECTION_STATION, etc.
+            EntityClass.PERSONNEL,  # Maps to INSPECTOR, TECHNICIAN, etc.
+            EntityClass.EVENT       # Maps to INSPECTION, MAINTENANCE_TASK, etc.
+        },
+        relations={
+            RelationType.LOCATED_IN,
+            RelationType.MOVED_TO,
+            RelationType.INSPECTED_BY,
+            RelationType.INSTALLED_AT,
+            RelationType.CONTAINS
+        },
+        attributes=addqual_ontology.attribute_constraints,
+        relation_domains={
+            RelationType.LOCATED_IN: {EntityClass.EQUIPMENT, EntityClass.COMPONENT},
+            RelationType.MOVED_TO: {EntityClass.EQUIPMENT, EntityClass.COMPONENT},
+            RelationType.INSPECTED_BY: {EntityClass.EQUIPMENT, EntityClass.COMPONENT},
+            RelationType.INSTALLED_AT: {EntityClass.EQUIPMENT, EntityClass.COMPONENT},
+        },
+        relation_ranges={
+            RelationType.LOCATED_IN: {EntityClass.LOCATION},
+            RelationType.MOVED_TO: {EntityClass.LOCATION},
+            RelationType.INSPECTED_BY: {EntityClass.PERSONNEL},
+            RelationType.INSTALLED_AT: {EntityClass.LOCATION},
+        }
+    )
+
+    # Get aerospace standard terms (200+ terms)
+    standard_terms = addqual_ontology.get_aerospace_standards_vocabulary()
+
+    # Get historical facts for ESV training
+    historical_facts = get_historical_facts_for_embeddings()
+
+    existing_facts = []
+
+    # Initialize real modules with AddQual data
+    real_pov = RealPOV()
+    real_esv = RealESV(historical_facts=historical_facts)
+    real_wsv = RealWSV()
+
+    # Create verification modules that wrap the real implementations
+    modules = [
+        LOV_Module(ontology=ontology, threshold=0.5, alpha=0.5, weight=0.2),
+        POV_Module(standard_terms=standard_terms, threshold=0.5, alpha=0.5, weight=0.2),
+        MAV_Module(existing_facts=existing_facts, max_velocity=5.0,  # Forklift speed limit
+                  threshold=0.5, alpha=0.5, weight=0.25),
+        WSV_Module(threshold=0.5, alpha=0.5, weight=0.15),
+        ESV_Module(historical_facts=historical_facts, threshold=0.5, alpha=0.5, weight=0.2)
+    ]
+
+    engine = RMMVeEngine(
+        modules=modules,
+        global_threshold=0.75,
+        review_margin=0.10,
+        force_m3_execution=True  # Ensure physics checks always run
+    )
+
+    physics = PhysicsConstraints(
+        max_velocity=5.0,  # Forklift speed limit from TRANSPORT_MODES
+        temporal_resolution=1.0,
+        spatial_resolution=0.1
+    )
+    stkg = STKG(ontology=ontology, physics=physics)
+
+    return engine, stkg, ontology, modules
+
+
+def create_addqual_scenarios():
+    """Create AddQual aerospace scenarios with real data"""
+    if not ADDQUAL_AVAILABLE:
+        return create_critical_scenarios()
+
+    # Get AddQual sample facts
+    facts_list = get_sample_facts()
+
+    # Map AddQual facts to scenario format
+    scenarios = {}
+
+    for fact in facts_list:
+        # Normal operation - F001
+        if fact['fact_id'] == 'F001':
+            scenarios["✅ SAFE: Normal Operation"] = {
+                "description": "Turbine blade SN-45782 arrives in Maintenance Bay 2 for inspection",
+                "risk": "LOW",
+                "fact": {
+                    "subject": fact['subject'],
+                    "subject_class": EntityClass.COMPONENT,
+                    "relation": RelationType.LOCATED_IN,
+                    "object": fact['object'],
+                    "object_class": EntityClass.LOCATION,
+                    "x": fact['x'], "y": fact['y'], "z": fact['z'],
+                    "time": fact['time'],
+                    "confidence": fact['confidence'],
+                    "source": fact['source'],
+                    "attributes": fact['attributes'],
+                    "expected": "ACCEPT",
+                    "why_safe": "All modules pass: Real aerospace ontology valid, FAA standard terms used, physics constraints satisfied, external sources confirm"
+                }
+            }
+
+        # Physics violation - F009
+        if fact['fact_id'] == 'F009_DEFINITIVE_VIOLATION':
+            scenarios["⚠️ DANGER: Physics Violation (Only M3 Catches!)"] = {
+                "description": "Turbine blade traveled 92.2 meters in only 15 seconds - PHYSICALLY IMPOSSIBLE!",
+                "risk": "CRITICAL",
+                "fact": {
+                    "subject": fact['subject'],
+                    "subject_class": EntityClass.COMPONENT,
+                    "relation": RelationType.LOCATED_IN,
+                    "object": fact['object'],
+                    "object_class": EntityClass.LOCATION,
+                    "x": fact['x'], "y": fact['y'], "z": fact['z'],
+                    "time": fact['time'],
+                    "confidence": fact['confidence'],
+                    "source": fact['source'],
+                    "attributes": fact['attributes'],
+                    "expected": "REJECT",
+                    "why_dangerous": "Required velocity: 6.15 m/s EXCEEDS facility forklift speed limit of 5.0 m/s. M1, M2, M4, M5 all PASS - only M3 catches this!",
+                    "real_impact": "False location data could lead to: (1) Installation of WRONG blade on engine, (2) Critical safety inspection failure, (3) Catastrophic engine failure during flight"
+                }
+            }
+
+        # Content hallucination - F010
+        if fact['fact_id'] == 'F010_HALLUCINATION':
+            scenarios["🚨 DANGER: Content Hallucination"] = {
+                "description": "LLM fabricates non-existent inspection record with fake inspector",
+                "risk": "HIGH",
+                "fact": {
+                    "subject": fact['subject'],
+                    "subject_class": EntityClass.EVENT,
+                    "relation": RelationType.INSPECTED_BY,
+                    "object": fact['object'],
+                    "object_class": EntityClass.PERSONNEL,
+                    "x": fact['x'], "y": fact['y'], "z": fact['z'],
+                    "time": fact['time'],
+                    "confidence": fact['confidence'],
+                    "source": fact['source'],
+                    "attributes": fact['attributes'],
+                    "expected": "REJECT",
+                    "why_dangerous": "Inspection ID 'FAKE2025-9999' not in standard FAA format. Inspector not in personnel database. M2 (POV) and M4 (WSV) catch this!",
+                    "real_impact": "Uninspected component cleared for flight - potential catastrophic failure"
+                }
+            }
+
+        # Semantic drift - F011
+        if fact['fact_id'] == 'F011_SEMANTIC_DRIFT':
+            scenarios["⚠️ WARNING: Semantic Drift"] = {
+                "description": "LLM uses informal 'minor_scratch' instead of FAA standard damage terminology",
+                "risk": "MEDIUM",
+                "fact": {
+                    "subject": fact['subject'],
+                    "subject_class": EntityClass.COMPONENT,
+                    "relation": RelationType.LOCATED_IN,  # Simplified from HAS_STATUS
+                    "object": "InspectionBay-3",
+                    "object_class": EntityClass.LOCATION,
+                    "x": fact['x'], "y": fact['y'], "z": fact['z'],
+                    "time": fact['time'],
+                    "confidence": fact['confidence'],
+                    "source": fact['source'],
+                    "attributes": fact['attributes'],
+                    "expected": "REVIEW",
+                    "why_dangerous": "Non-standard terminology 'minor_scratch' not in FAA AC 43.13-1B. Should be 'erosion', 'pitting', or 'scoring'. M1 (LOV) and M5 (ESV) detect drift!",
+                    "real_impact": "Systematic misclassification leads to inadequate maintenance - structural damage progresses undetected"
+                }
+            }
+
+    return scenarios
 
 
 def create_critical_scenarios():
@@ -455,14 +650,30 @@ def show_critical_demonstration():
     """Show the critical scenario that demonstrates M3's value"""
     st.header("🚨 Critical Demonstration: The Physics Violation")
 
-    st.markdown("""
-    ### Scenario: Aircraft Maintenance Facility
+    # Check domain mode and show appropriate banner
+    if st.session_state.get('domain_mode') == "AddQual Aerospace (Real Data)":
+        st.info("🏭 **Using AddQual Aerospace Domain** - Real industry data with FAA standards, actual facility layout, and authentic maintenance scenarios")
+        st.markdown("""
+        ### Scenario: AddQual Aerospace Maintenance Facility
 
-    **Context:** A turbine blade (serial TB-789) is undergoing maintenance. The LLM extracts location
-    facts from maintenance logs to track the component's movement through the facility.
-    """)
+        **Context:** A turbine blade (serial SN-45789) is undergoing maintenance. The LLM extracts location
+        facts from maintenance logs to track the component's movement through the AddQual facility.
 
-    scenarios = create_critical_scenarios()
+        **Real Data:**
+        - Actual facility layout with coordinates
+        - Real transport velocity limits (forklift: 5.0 m/s)
+        - FAA standard terminology checking
+        - Industry-authentic maintenance procedures
+        """)
+        scenarios = create_addqual_scenarios()
+    else:
+        st.markdown("""
+        ### Scenario: Aircraft Maintenance Facility
+
+        **Context:** A turbine blade (serial TB-789) is undergoing maintenance. The LLM extracts location
+        facts from maintenance logs to track the component's movement through the facility.
+        """)
+        scenarios = create_critical_scenarios()
 
     # Show the danger scenario
     danger_scenario = scenarios["⚠️ DANGER: Physics Violation (Only M3 Catches!)"]
@@ -752,15 +963,32 @@ def show_comparison_mode():
 def main():
     """Main application"""
 
-    # Initialize system
-    if 'engine' not in st.session_state:
-        st.session_state.engine, st.session_state.stkg, \
-        st.session_state.ontology, st.session_state.modules = initialize_demo_system()
-        st.session_state.existing_facts = []
-
     # Sidebar navigation
     st.sidebar.title("🛡️ ATLASky-AI Demo")
     st.sidebar.markdown("---")
+
+    # Domain selector
+    domain_mode = st.sidebar.radio(
+        "🎛️ Select Domain:",
+        ["Simple Demo (Conceptual)", "AddQual Aerospace (Real Data)"],
+        index=0,
+        help="Simple: Generic demonstration | AddQual: Real aerospace industry data"
+    )
+
+    st.sidebar.markdown("---")
+
+    # Initialize system based on domain
+    if 'engine' not in st.session_state or st.session_state.get('domain_mode') != domain_mode:
+        st.session_state.domain_mode = domain_mode
+
+        if domain_mode == "AddQual Aerospace (Real Data)":
+            st.session_state.engine, st.session_state.stkg, \
+            st.session_state.ontology, st.session_state.modules = initialize_addqual_system()
+        else:
+            st.session_state.engine, st.session_state.stkg, \
+            st.session_state.ontology, st.session_state.modules = initialize_demo_system()
+
+        st.session_state.existing_facts = []
 
     page = st.sidebar.radio(
         "Select View:",
