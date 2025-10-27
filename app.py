@@ -205,11 +205,43 @@ def initialize_addqual_system():
         st.error("AddQual domain not available. Please check installation.")
         return initialize_demo_system()
 
-    # Get AddQual ontology
-    addqual_ontology = AddQualOntology()
+    # Map AddQual-specific attributes to generic entity classes
+    mapped_attributes = {
+        EntityClass.COMPONENT: [
+            "serial_number", "part_number", "material", "blade_length_mm",
+            "leading_edge_thickness_mm", "trailing_edge_thickness_mm",
+            "coating_type", "manufacture_date", "flight_hours",
+            "cycle_count", "last_inspection_date", "status",
+            "weight_kg", "dimensions", "corrosion_rating", "structural_integrity"
+        ],
+        EntityClass.EQUIPMENT: [
+            "serial_number", "model", "manufacturer", "thrust_rating_lbs",
+            "total_flight_hours", "cycles_since_overhaul", "status",
+            "device_id", "device_type", "accuracy", "range",
+            "last_calibration_date", "calibration_due_date",
+            "equipment_id", "type", "max_velocity_ms", "max_load_kg",
+            "operator_required", "safety_certification"
+        ],
+        EntityClass.LOCATION: [
+            "bay_number", "facility_id", "coordinates", "capacity",
+            "environmental_controls", "certification_level",
+            "station_id", "inspection_type", "equipment_list",
+            "certification_standard", "calibration_date"
+        ],
+        EntityClass.PERSONNEL: [
+            "employee_id", "name", "certification_number",
+            "certification_level", "expiry_date", "specialization",
+            "license_number", "qualification_level", "authorized_operations"
+        ],
+        EntityClass.EVENT: [
+            "inspection_id", "inspection_type", "timestamp",
+            "result", "findings", "compliance_standard", "next_due_date",
+            "test_id", "test_type", "standard", "measured_values",
+            "pass_criteria", "task_id", "operation_type", "duration_minutes"
+        ]
+    }
 
     # Create DomainOntology compatible with our system
-    # Map AddQualEntityClass to our EntityClass enum for compatibility
     ontology = DomainOntology(
         classes={
             EntityClass.EQUIPMENT,  # Maps to ENGINE, MEASUREMENT_DEVICE, etc.
@@ -225,7 +257,7 @@ def initialize_addqual_system():
             RelationType.INSTALLED_AT,
             RelationType.CONTAINS
         },
-        attributes=addqual_ontology.attribute_constraints,
+        attributes=mapped_attributes,
         relation_domains={
             RelationType.LOCATED_IN: {EntityClass.EQUIPMENT, EntityClass.COMPONENT},
             RelationType.MOVED_TO: {EntityClass.EQUIPMENT, EntityClass.COMPONENT},
@@ -241,7 +273,7 @@ def initialize_addqual_system():
     )
 
     # Get aerospace standard terms (200+ terms)
-    standard_terms = addqual_ontology.get_aerospace_standards_vocabulary()
+    standard_terms = list(AddQualOntology.get_aerospace_standards_vocabulary())
 
     # Get historical facts for ESV training
     historical_facts = get_historical_facts_for_embeddings()
